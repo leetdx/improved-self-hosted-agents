@@ -1,0 +1,80 @@
+name: WeatherForecast CI Pipeline
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - closed
+    paths:
+      - 'PlayStudios.MyService/**'
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: true
+        default: 'warning'
+        type: choice
+        options:
+        - info
+        - warning
+        - debug
+
+env:
+  DOTNET_VERSION: "3.1.x"
+  PROJECT_WEB_API_PATH: "PlayStudios.MyService.WebApi/"
+  PROJECT_WEB_API_TESTS_PATH: "PlayStudios.MyService.WebApi.Tests/"
+  TEST_RESULTS_PATH: "PlayStudios.MyService.WebApi.Tests/TestResults"
+  DOCKERFILE_PATH: "./Dockerfile"
+  DOTNET_ACTION_CONFIGURATION: "Release"
+  CODE_COVERAGE_OUTPUT: "XPlat Code Coverage"
+  CONTAINER_REGISTRY: "acrfoosea001.azurecr.io"
+  REPO_NAME: "weatherforecast"
+
+jobs:
+  build-test:
+    name: Build and Test
+    runs-on: [self-hosted, legacy-asp-dotnet]
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Restore dependencies
+        working-directory: ${{ env.PROJECT_WEB_API_PATH }}
+        run: dotnet restore
+
+      - name: Build project
+        working-directory: ${{ env.PROJECT_WEB_API_PATH }}
+        run: dotnet build --no-restore --configuration ${{ env.DOTNET_ACTION_CONFIGURATION }}
+
+      - name: Run unit tests
+        working-directory: ${{ env.PROJECT_WEB_API_TESTS_PATH }}
+        run: dotnet test --configuration ${{ env.DOTNET_ACTION_CONFIGURATION }} --collect:"${{ env.CODE_COVERAGE_OUTPUT }}"
+      
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v5
+        with:
+          directory: ${{ env.TEST_RESULTS_PATH }}
+          files: "**/coverage.cobertura.xml"
+          fail_ci_if_error: true
+
+  build-artifacts:
+    name: Build Artifacts
+    needs: [build-test]
+    runs-on: [self-hosted, legacy-asp-dotnet]
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.CONTAINER_REGISTRY }}/${{ env.REPO_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+
+      - name: Build Image
+        run: docker build --tag ${{ steps.meta.outputs.tags }} --file ${{ env.DOCKERFILE_PATH }} ${{ env.PROJECT_WEB_API_PATH }}
